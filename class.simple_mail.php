@@ -4,7 +4,7 @@
  *
  * A simple PHP wrapper class for sending email using the mail() method.
  *
- * PHP version 5
+ * PHP version > 5.2
  *
  * LICENSE: This source file is subject to the MIT license, which is
  * available through the world-wide-web at the following URI:
@@ -13,9 +13,9 @@
  * @category  SimpleMail
  * @package   SimpleMail
  * @author    Eoghan O'Brien <eoghan@eoghanobrien.com>
- * @copyright 2009 - 2014 Eoghan O'Brien
+ * @copyright 2009 - 2017 Eoghan O'Brien
  * @license   http://github.com/eoghanobrien/php-simple-mail/LICENCE.txt MIT
- * @version   1.5
+ * @version   1.7.1
  * @link      http://github.com/eoghanobrien/php-simple-mail
  */
 
@@ -25,9 +25,9 @@
  * @category  SimpleMail
  * @package   SimpleMail
  * @author    Eoghan O'Brien <eoghan@eoghanobrien.com>
- * @copyright 2009 - 2014 Eoghan O'Brien
+ * @copyright 2009 - 2017 Eoghan O'Brien
  * @license   http://github.com/eoghanobrien/php-simple-mail/LICENCE.txt MIT
- * @version   1.4
+ * @version   1.7.1
  * @link      http://github.com/eoghanobrien/php-simple-mail
  */
 class SimpleMail
@@ -72,6 +72,15 @@ class SimpleMail
      */
     protected $_uid;
 
+    /**
+     * Named constructor.
+     *
+     * @return static
+     */
+    public static function make()
+    {
+        return new SimpleMail();
+    }
 
     /**
      * __construct
@@ -88,7 +97,7 @@ class SimpleMail
      *
      * Resets all properties to initial state.
      *
-     * @return SimpleMail
+     * @return self
      */
     public function reset()
     {
@@ -109,7 +118,7 @@ class SimpleMail
      * @param string $email The email address to send to.
      * @param string $name  The name of the person to send to.
      *
-     * @return SimpleMail
+     * @return self
      */
     public function setTo($email, $name)
     {
@@ -130,11 +139,74 @@ class SimpleMail
     }
 
     /**
+     * setFrom
+     *
+     * @param string $email The email to send as from.
+     * @param string $name  The name to send as from.
+     *
+     * @return self
+     */
+    public function setFrom($email, $name)
+    {
+        $this->addMailHeader('From', (string) $email, (string) $name);
+        return $this;
+    }
+
+    /**
+     * setCc
+     *
+     * @param array  $pairs  An array of name => email pairs.
+     *
+     * @return self
+     */
+    public function setCc(array $pairs)
+    {
+        return $this->addMailHeaders('Cc', $pairs);
+    }
+
+    /**
+     * setBcc
+     *
+     * @param array  $pairs  An array of name => email pairs.
+     *
+     * @return self
+     */
+    public function setBcc(array $pairs)
+    {
+        return $this->addMailHeaders('Bcc', $pairs);
+    }
+
+    /**
+     * setReplyTo
+     *
+     * @param string $email
+     * @param string $name
+     *
+     * @return self
+     */
+    public function setReplyTo($email, $name = null)
+    {
+        return $this->addMailHeader('Reply-To', $email, $name);
+    }
+
+    /**
+     * setHtml
+     *
+     * @return self
+     */
+    public function setHtml()
+    {
+        return $this->addGenericHeader(
+            'Content-Type', 'text/html; charset="utf-8"'
+        );
+    }
+
+    /**
      * setSubject
      *
      * @param string $subject The email subject
      *
-     * @return SimpleMail
+     * @return self
      */
     public function setSubject($subject)
     {
@@ -159,7 +231,7 @@ class SimpleMail
      *
      * @param string $message The message to send.
      *
-     * @return SimpleMail
+     * @return self
      */
     public function setMessage($message)
     {
@@ -180,15 +252,16 @@ class SimpleMail
     /**
      * addAttachment
      *
-     * @param string $path     The file path to the attachment.
+     * @param string $path The file path to the attachment.
      * @param string $filename The filename of the attachment when emailed.
-     * @param string $data     (optional) The data if already loaded.
-     *
-     * @return SimpleMail
+     * @param null $data
+     * 
+     * @return self
      */
     public function addAttachment($path, $filename = null, $data = null)
     {
         $filename = empty($filename) ? basename($path) : $filename;
+        $filename = $this->encodeUtf8($this->filterOther((string) $filename));
         $data = empty($data) ? $this->getAttachmentData($path) : $data;
         $this->_attachments[] = array(
             'path' => $path,
@@ -215,32 +288,42 @@ class SimpleMail
     }
 
     /**
-     * setFrom
-     *
-     * @param string $email The email to send as from.
-     * @param string $name  The name to send as from.
-     *
-     * @return SimpleMail
-     */
-    public function setFrom($email, $name)
-    {
-        $this->addMailHeader('From', (string) $email, (string) $name);
-        return $this;
-    }
-
-    /**
      * addMailHeader
      *
      * @param string $header The header to add.
      * @param string $email  The email to add.
      * @param string $name   The name to add.
      *
-     * @return SimpleMail
+     * @return self
      */
-    public function addMailHeader($header, $email = null, $name = null)
+    public function addMailHeader($header, $email, $name = null)
     {
         $address = $this->formatHeader((string) $email, (string) $name);
         $this->_headers[] = sprintf('%s: %s', (string) $header, $address);
+        return $this;
+    }
+
+    /**
+     * addMailHeaders
+     *
+     * @param string $header The header to add.
+     * @param array  $pairs  An array of name => email pairs.
+     *
+     * @return self
+     */
+    public function addMailHeaders($header, array $pairs)
+    {
+        if (count($pairs) === 0) {
+            throw new InvalidArgumentException(
+                'You must pass at least one name => email pair.'
+            );
+        }
+        $addresses = array();
+        foreach ($pairs as $name => $email) {
+            $name = is_numeric($name) ? null : $name;
+            $addresses[] = $this->formatHeader($email, $name);
+        }
+        $this->addGenericHeader($header, implode(',', $addresses));
         return $this;
     }
 
@@ -250,7 +333,7 @@ class SimpleMail
      * @param string $header The generic header to add.
      * @param mixed  $value  The value of the header.
      *
-     * @return SimpleMail
+     * @return self
      */
     public function addGenericHeader($header, $value)
     {
@@ -281,7 +364,7 @@ class SimpleMail
      *
      * @param string $additionalParameters The addition mail parameter.
      *
-     * @return SimpleMail
+     * @return self
      */
     public function setParameters($additionalParameters)
     {
@@ -304,7 +387,7 @@ class SimpleMail
      *
      * @param int $wrap The number of characters at which the message will wrap.
      *
-     * @return SimpleMail
+     * @return self
      */
     public function setWrap($wrap = 78)
     {
@@ -362,10 +445,10 @@ class SimpleMail
         $body = array();
         $body[] = "This is a multi-part message in MIME format.";
         $body[] = "--{$this->_uid}";
-        $body[] = "Content-type:text/html; charset=\"utf-8\"";
-        $body[] = "Content-Transfer-Encoding: 7bit";
+        $body[] = "Content-Type: text/html; charset=\"utf-8\"";
+        $body[] = "Content-Transfer-Encoding: quoted-printable";
         $body[] = "";
-        $body[] = $this->_message;
+        $body[] = quoted_printable_encode($this->_message);
         $body[] = "";
         $body[] = "--{$this->_uid}";
 
@@ -380,7 +463,6 @@ class SimpleMail
      * getAttachmentMimeTemplate
      *
      * @param array  $attachment An array containing 'file' and 'data' keys.
-     * @param string $uid        A unique identifier for the boundary.
      *
      * @return string
      */
@@ -404,8 +486,8 @@ class SimpleMail
     /**
      * send
      *
-     * @throws \RuntimeException on no 'To: ' address to send to.
      * @return boolean
+     * @throws \RuntimeException on no 'To: ' address to send to.
      */
     public function send()
     {
@@ -461,11 +543,11 @@ class SimpleMail
      */
     public function formatHeader($email, $name = null)
     {
-        $email = $this->filterEmail($email);
+        $email = $this->filterEmail((string) $email);
         if (empty($name)) {
             return $email;
         }
-        $name = $this->encodeUtf8($this->filterName($name));
+        $name = $this->encodeUtf8($this->filterName((string) $name));
         return sprintf('"%s" <%s>', $name, $email);
     }
 
